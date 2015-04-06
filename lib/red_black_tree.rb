@@ -9,13 +9,14 @@ class RedBlackTree
     attr_reader :key, :value, :color
     attr_reader :left, :right
 
-    def initialize(key, value, left, right, color = :RED)
+    def initialize(key, value, left, right, color = :RED, traversal = :inorder)
       @key = key
       @value = value
       @left = left
       @right = right
       # new node is added as RED
       @color = color
+      @traversal = traversal
     end
 
     def set_root
@@ -38,11 +39,16 @@ class RedBlackTree
       @left.size + 1 + @right.size
     end
 
-    # inorder
     def each(&block)
-      @left.each(&block)
-      yield [@key, @value]
-      @right.each(&block)
+      if @traversal == :inorder
+        @left.each(&block)
+        yield [@key, @value]
+        @right.each(&block)
+      else
+        @right.each(&block)
+        yield [@key, @value]
+        @left.each(&block)
+      end
     end
 
     def each_key
@@ -348,7 +354,7 @@ class RedBlackTree
       rebalance = false
       if @left.empty? and @right.empty?
         # just remove this node and ask rebalance to the parent
-        new_root = EMPTY
+        new_root = EmptyNode.new(@traversal)
         if black?
           rebalance = true
         end
@@ -365,7 +371,7 @@ class RedBlackTree
       else
         # pick the minimum node from the right sub-tree and replace self with it
         deleted, @right, rebalance = @right.delete_min
-        new_root = Node.new(deleted.key, deleted.value, @left, @right, @color)
+        new_root = Node.new(deleted.key, deleted.value, @left, @right, @color, @traversal)
         if rebalance
           new_root, rebalance = new_root.rebalance_for_right_delete
         end
@@ -382,7 +388,8 @@ class RedBlackTree
     end
 
     class EmptyNode < Node
-      def initialize
+      def initialize(traversal = :inorder)
+        @traversal = traversal
         @value = nil
         @color = :BLACK
       end
@@ -401,7 +408,7 @@ class RedBlackTree
 
       # returns new_root
       def insert(key, value)
-        Node.new(key, value, self, self)
+        Node.new(key, value, self, self, :RED, @traversal)
       end
 
       # returns value
@@ -422,7 +429,6 @@ class RedBlackTree
         # intentionally blank
       end
     end
-    EMPTY = Node::EmptyNode.new.freeze
   end
 
   DEFAULT = Object.new
@@ -430,11 +436,12 @@ class RedBlackTree
   attr_accessor :default
   attr_reader :default_proc
 
-  def initialize(default = DEFAULT, &block)
+  def initialize(default = DEFAULT, traversal = :inorder, &block)
     if block && default != DEFAULT
       raise ArgumentError, 'wrong number of arguments'
     end
-    @root = Node::EMPTY
+    @traversal = traversal
+    @root = Node::EmptyNode.new(@traversal)
     @default = default
     @default_proc = block
   end
@@ -444,7 +451,7 @@ class RedBlackTree
   end
 
   def empty?
-    root == Node::EMPTY
+    root.empty?
   end
 
   def size
@@ -493,7 +500,7 @@ class RedBlackTree
   end
 
   def clear
-    @root = Node::EMPTY
+    @root = Node::EmptyNode.new(@traversal)
   end
 
   def []=(key, value)
@@ -621,23 +628,23 @@ class ConcurrentRedBlackTree < RedBlackTree
   protected
 
     def new_children(dir, node, other, color = @color)
-      dir == LEFT ? 
-        ConcurrentNode.new(@key, @value, node, other, color) :
-        ConcurrentNode.new(@key, @value, other, node, color)
+      dir == LEFT ?
+        ConcurrentNode.new(@key, @value, node, other, color, @traversal) :
+        ConcurrentNode.new(@key, @value, other, node, color, @traversal)
     end
 
     def new_child(dir, node, color = @color)
-      dir == LEFT ? 
-        ConcurrentNode.new(@key, @value, node, @right, color) :
-        ConcurrentNode.new(@key, @value, @left, node, color)
+      dir == LEFT ?
+        ConcurrentNode.new(@key, @value, node, @right, color, @traversal) :
+        ConcurrentNode.new(@key, @value, @left, node, color, @traversal)
     end
 
     def new_color(color)
-      ConcurrentNode.new(@key, @value, @left, @right, color)
+      ConcurrentNode.new(@key, @value, @left, @right, color, @traversal)
     end
 
     def new_value(value)
-      ConcurrentNode.new(@key, value, @left, @right, @color)
+      ConcurrentNode.new(@key, value, @left, @right, @color, @traversal)
     end
 
     def child(dir)
@@ -763,7 +770,7 @@ class ConcurrentRedBlackTree < RedBlackTree
       rebalance = false
       if @left.empty? and @right.empty?
         # just remove this node and ask rebalance to the parent
-        new_node = EMPTY_CONCURRENT
+        new_node = EmptyConcurrentNode.new(@traversal)
         if black?
           rebalance = true
         end
@@ -791,15 +798,14 @@ class ConcurrentRedBlackTree < RedBlackTree
     class EmptyConcurrentNode < EmptyNode
       # @Overrides
       def insert(key, value)
-        ConcurrentNode.new(key, value, self, self)
+        ConcurrentNode.new(key, value, self, self, :RED, @traversal)
       end
     end
-    EMPTY_CONCURRENT = ConcurrentNode::EmptyConcurrentNode.new.freeze
   end
 
-  def initialize(default = DEFAULT, &block)
+  def initialize(default = DEFAULT, traversal = :inorder, &block)
     super
-    @root = Atomic.new(ConcurrentNode::EMPTY_CONCURRENT)
+    @root = Atomic.new(ConcurrentNode::EmptyConcurrentNode.new(@traversal))
   end
 
   def root
@@ -807,11 +813,11 @@ class ConcurrentRedBlackTree < RedBlackTree
   end
 
   def empty?
-    root == ConcurrentNode::EMPTY_CONCURRENT
+    root.empty?
   end
 
   def clear
-    @root.set(ConcurrentNode::EMPTY_CONCURRENT)
+    @root.set(ConcurrentNode::EmptyConcurrentNode.new(@traversal))
   end
 
   def []=(key, value)
@@ -837,7 +843,7 @@ class ConcurrentRedBlackTree < RedBlackTree
     deleted = nil
     @root.update { |root|
       deleted, root, rebalance = root.delete(key)
-      unless root == ConcurrentNode::EMPTY_CONCURRENT
+      unless root.empty?
         root.set_root
         root.check_height if $DEBUG
       end
